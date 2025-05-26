@@ -1,14 +1,16 @@
 package com.programthis.order_cart_service.service;
 
+import com.programthis.order_cart_service.model.CartItem;
 import com.programthis.order_cart_service.model.Order;
 import com.programthis.order_cart_service.model.OrderItem;
 import com.programthis.order_cart_service.model.ShoppingCart;
 import com.programthis.order_cart_service.repository.OrderRepository;
 import com.programthis.order_cart_service.repository.OrderItemRepository;
+import com.programthis.order_cart_service.client.ProductCatalogServiceClient; // ¡Añadido!
+import com.programthis.order_cart_service.dto.ProductDto; // ¡Añadido!
 import jakarta.transaction.Transactional;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
-
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -21,13 +23,17 @@ public class OrderService {
 
     private final OrderRepository orderRepository;
     private final OrderItemRepository orderItemRepository;
-    private final ShoppingCartService shoppingCartService; // Para interactuar con el carrito
+    private final ShoppingCartService shoppingCartService;
+    private final ProductCatalogServiceClient productCatalogServiceClient; // ¡Añadido!
 
     @Autowired
-    public OrderService(OrderRepository orderRepository, OrderItemRepository orderItemRepository, ShoppingCartService shoppingCartService) {
+    public OrderService(OrderRepository orderRepository, OrderItemRepository orderItemRepository,
+                        ShoppingCartService shoppingCartService,
+                        ProductCatalogServiceClient productCatalogServiceClient) { // ¡Añadido!
         this.orderRepository = orderRepository;
         this.orderItemRepository = orderItemRepository;
         this.shoppingCartService = shoppingCartService;
+        this.productCatalogServiceClient = productCatalogServiceClient; // ¡Añadido!
     }
 
     // Crear un pedido a partir del carrito de un usuario
@@ -38,7 +44,6 @@ public class OrderService {
             throw new RuntimeException("El carrito está vacío. No se puede crear un pedido.");
         }
 
-        // Crear el nuevo pedido
         Order newOrder = new Order();
         newOrder.setUserId(userId);
         newOrder.setOrderDate(LocalDateTime.now());
@@ -51,13 +56,18 @@ public class OrderService {
                 .map(cartItem -> {
                     OrderItem orderItem = new OrderItem();
                     orderItem.setProductId(cartItem.getProductId());
-                    // Nota: Aquí necesitaríamos el nombre del producto.
-                    // En un sistema real, haríamos una llamada al Product Catalog Service
-                    // para obtener los detalles del producto (nombre, descripción, etc.)
-                    // Por ahora, pondremos un placeholder o podríamos añadir un campo al CartItem si es necesario.
-                    orderItem.setProductName("Producto ID: " + cartItem.getProductId()); // Placeholder
+
+                    // *** Obtener el nombre del producto del Product Catalog Service ***
+                    Optional<ProductDto> productDtoOptional = productCatalogServiceClient.getProductById(cartItem.getProductId());
+                    if (productDtoOptional.isEmpty()) {
+                        // Si el producto no existe en el catálogo, lanzamos un error o manejamos como prefieras
+                        throw new RuntimeException("Producto con ID " + cartItem.getProductId() + " en el carrito no encontrado en el catálogo. No se puede crear el pedido.");
+                    }
+                    ProductDto productDto = productDtoOptional.get();
+                    orderItem.setProductName(productDto.getName()); // Usar el nombre real del producto
+
                     orderItem.setQuantity(cartItem.getQuantity());
-                    orderItem.setUnitPrice(cartItem.getPriceAtAddition()); // Precio al momento de añadir al carrito
+                    orderItem.setUnitPrice(cartItem.getPriceAtAddition()); // Usar el precio que se guardó en el carrito
                     orderItem.setSubtotal(cartItem.getPriceAtAddition().multiply(BigDecimal.valueOf(cartItem.getQuantity())));
                     orderItem.setOrder(newOrder); // Establece la relación bidireccional
                     return orderItem;
@@ -73,7 +83,8 @@ public class OrderService {
 
         // Guardar el pedido y sus ítems
         Order savedOrder = orderRepository.save(newOrder);
-        orderItemRepository.saveAll(orderItems); // Guarda los ítems del pedido
+        // Hibernate debería guardar los OrderItems automáticamente debido a CascadeType.ALL en Order
+        // orderItemRepository.saveAll(orderItems); // Esta línea podría ser redundante si el cascade está bien configurado
 
         // Limpiar el carrito después de crear el pedido
         shoppingCartService.clearCart(userId);
