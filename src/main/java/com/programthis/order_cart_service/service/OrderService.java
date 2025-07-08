@@ -6,7 +6,11 @@ import com.programthis.order_cart_service.model.ShoppingCart;
 import com.programthis.order_cart_service.repository.OrderRepository;
 import com.programthis.order_cart_service.repository.OrderItemRepository;
 import com.programthis.order_cart_service.client.ProductCatalogServiceClient; // ¡Añadido!
+import com.programthis.order_cart_service.client.PaymentServiceClient; // ¡NUEVA ADICIÓN!
 import com.programthis.order_cart_service.dto.ProductDto; // ¡Añadido!
+import com.programthis.order_cart_service.dto.PaymentRequestDto; // ¡NUEVA ADICIÓN!
+import com.programthis.order_cart_service.dto.PaymentResponseDto; // ¡NUEVA ADICIÓN!
+
 import jakarta.transaction.Transactional;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -22,15 +26,18 @@ public class OrderService {
 
     private final OrderRepository orderRepository;
     private final ShoppingCartService shoppingCartService;
-    private final ProductCatalogServiceClient productCatalogServiceClient; // ¡Añadido!
+    private final ProductCatalogServiceClient productCatalogServiceClient;
+    private final PaymentServiceClient paymentServiceClient; // ¡NUEVA ADICIÓN!
 
     @Autowired
     public OrderService(OrderRepository orderRepository, OrderItemRepository orderItemRepository,
                         ShoppingCartService shoppingCartService,
-                        ProductCatalogServiceClient productCatalogServiceClient) { // ¡Añadido!
+                        ProductCatalogServiceClient productCatalogServiceClient,
+                        PaymentServiceClient paymentServiceClient) { // ¡MODIFICACIÓN CLAVE: Inyección de PaymentServiceClient!
         this.orderRepository = orderRepository;
         this.shoppingCartService = shoppingCartService;
-        this.productCatalogServiceClient = productCatalogServiceClient; // ¡Añadido!
+        this.productCatalogServiceClient = productCatalogServiceClient;
+        this.paymentServiceClient = paymentServiceClient; // ¡NUEVA ADICIÓN!
     }
 
     // Crear un pedido a partir del carrito de un usuario
@@ -46,7 +53,7 @@ public class OrderService {
         newOrder.setOrderDate(LocalDateTime.now());
         newOrder.setStatus("PENDING"); // O un estado inicial adecuado
         newOrder.setShippingAddress(shippingAddress);
-        newOrder.setPaymentMethod(paymentMethod);
+        newOrder.setPaymentMethod(paymentMethod); // Guardamos el método de pago especificado
 
         BigDecimal totalAmount = BigDecimal.ZERO;
         List<OrderItem> orderItems = cart.getItems().stream()
@@ -57,7 +64,6 @@ public class OrderService {
                     // *** Obtener el nombre del producto del Product Catalog Service ***
                     Optional<ProductDto> productDtoOptional = productCatalogServiceClient.getProductById(cartItem.getProductId());
                     if (productDtoOptional.isEmpty()) {
-                        // Si el producto no existe en el catálogo, lanzamos un error o manejamos como prefieras
                         throw new RuntimeException("Producto con ID " + cartItem.getProductId() + " en el carrito no encontrado en el catálogo. No se puede crear el pedido.");
                     }
                     ProductDto productDto = productDtoOptional.get();
@@ -80,11 +86,34 @@ public class OrderService {
 
         // Guardar el pedido y sus ítems
         Order savedOrder = orderRepository.save(newOrder);
-        // Hibernate debería guardar los OrderItems automáticamente debido a CascadeType.ALL en Order
-        // orderItemRepository.saveAll(orderItems); // Esta línea podría ser redundante si el cascade está bien configurado
-
+        
         // Limpiar el carrito después de crear el pedido
         shoppingCartService.clearCart(userId);
+
+        // ¡MODIFICACIÓN CLAVE: Iniciar el proceso de pago!
+        PaymentRequestDto paymentRequest = new PaymentRequestDto(
+                savedOrder.getId().toString(), // El Payment Service espera orderId como String
+                savedOrder.getTotalAmount(),
+                savedOrder.getPaymentMethod() // Usa el método de pago de la orden
+        );
+
+        Optional<PaymentResponseDto> paymentResponseOptional = paymentServiceClient.processPayment(paymentRequest);
+
+        if (paymentResponseOptional.isPresent()) {
+            PaymentResponseDto paymentResponse = paymentResponseOptional.get();
+            // Actualiza el estado de la orden basándose en la respuesta del servicio de pagos
+            savedOrder.setStatus(paymentResponse.getPaymentStatus()); 
+            savedOrder.setTransactionId(paymentResponse.getTransactionId()); // Guarda el ID de transacción
+            orderRepository.save(savedOrder); // Guarda la orden actualizada con el estado de pago
+            System.out.println("Pago para orden " + savedOrder.getId() + " procesado con estado: " + paymentResponse.getPaymentStatus());
+        } else {
+            // Manejar el caso donde el pago no se pudo procesar (Optional.empty() de PaymentServiceClient)
+            System.err.println("Error: El pago para la orden " + savedOrder.getId() + " no pudo ser procesado por el Payment Service.");
+            // Podrías actualizar el estado de la orden a un estado de error, o lanzar una excepción.
+            savedOrder.setStatus("PAYMENT_FAILED"); // Ejemplo de actualización a estado de fallo
+            orderRepository.save(savedOrder);
+            throw new RuntimeException("El pago para la orden " + savedOrder.getId() + " falló o no pudo ser procesado.");
+        }
 
         return savedOrder;
     }

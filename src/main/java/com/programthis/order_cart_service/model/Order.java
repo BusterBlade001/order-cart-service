@@ -43,6 +43,9 @@ public class Order extends RepresentationModel<Order> { // Extiende de Represent
     @Column(name = "payment_method")
     private String paymentMethod;
 
+    @Column(name = "transaction_id")
+    private String transactionId;
+
     @JsonManagedReference
     @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     private List<OrderItem> items = new ArrayList<>();
