@@ -2,18 +2,33 @@ package com.programthis.order_cart_service.controller;
 
 import com.programthis.order_cart_service.model.Order;
 import com.programthis.order_cart_service.service.OrderService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.hateoas.CollectionModel;
+import org.springframework.hateoas.EntityModel;
+import org.springframework.hateoas.IanaLinkRelations;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
-import lombok.AllArgsConstructor;
-import lombok.Data;
-import lombok.NoArgsConstructor;
+import java.util.stream.Collectors;
+
+import static org.springframework.hateoas.server.mvc.WebMvcLinkBuilder.linkTo;
+import static org.springframework.hateoas.server.mvc.WebMvcLinkBuilder.methodOn;
 
 @RestController
 @RequestMapping("/api/orders")
+@Tag(name = "Order Management", description = "APIs for managing customer orders")
 public class OrderController {
 
     private final OrderService orderService;
@@ -23,68 +38,93 @@ public class OrderController {
         this.orderService = orderService;
     }
 
-    // Endpoint para crear un pedido a partir del carrito de un usuario
-    // POST http://localhost:8083/api/orders/{userId}/createFromCart
-    // Body (JSON): { "shippingAddress": "Calle Falsa 123", "paymentMethod": "Credit Card" }
+    private EntityModel<Order> toModel(Order order) {
+        return EntityModel.of(order,
+                linkTo(methodOn(OrderController.class).getOrderById(order.getId())).withSelfRel(),
+                linkTo(methodOn(OrderController.class).getOrdersByUserId(order.getUserId())).withRel("user-orders"));
+    }
+    
+    @Operation(summary = "Create an order from a user's cart")
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "201", description = "Order created successfully",
+                    content = @Content(mediaType = "application/hal+json", schema = @Schema(implementation = Order.class))),
+            @ApiResponse(responseCode = "400", description = "Bad request, e.g., empty cart")
+    })
     @PostMapping("/{userId}/createFromCart")
-    public ResponseEntity<Order> createOrderFromCart(
+    public ResponseEntity<EntityModel<Order>> createOrderFromCart(
             @PathVariable Long userId,
-            @RequestBody OrderCreationRequest request) { // Usaremos una clase DTO para el cuerpo de la solicitud
+            @RequestBody OrderCreationRequest request) {
         try {
             Order newOrder = orderService.createOrderFromCart(userId, request.getShippingAddress(), request.getPaymentMethod());
-            return new ResponseEntity<>(newOrder, HttpStatus.CREATED);
+            EntityModel<Order> orderModel = toModel(newOrder);
+            return new ResponseEntity<>(orderModel, HttpStatus.CREATED);
         } catch (RuntimeException e) {
-            return new ResponseEntity<>(null, HttpStatus.BAD_REQUEST);
+            return ResponseEntity.badRequest().build();
         }
     }
 
-    // Endpoint para obtener un pedido por su ID
-    // GET http://localhost:8083/api/orders/{orderId}
+    @Operation(summary = "Get an order by its ID")
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "Found the order",
+                    content = @Content(mediaType = "application/hal+json", schema = @Schema(implementation = Order.class))),
+            @ApiResponse(responseCode = "404", description = "Order not found")
+    })
     @GetMapping("/{orderId}")
-    public ResponseEntity<Order> getOrderById(@PathVariable Long orderId) {
+    public ResponseEntity<EntityModel<Order>> getOrderById(@PathVariable Long orderId) {
         return orderService.getOrderById(orderId)
-                .map(order -> new ResponseEntity<>(order, HttpStatus.OK))
+                .map(order -> ResponseEntity.ok(toModel(order)))
                 .orElse(new ResponseEntity<>(HttpStatus.NOT_FOUND));
     }
 
-    // Endpoint para obtener todos los pedidos de un usuario
-    // GET http://localhost:8083/api/orders/user/{userId}
+    @Operation(summary = "Get all orders for a specific user")
     @GetMapping("/user/{userId}")
-    public ResponseEntity<List<Order>> getOrdersByUserId(@PathVariable Long userId) {
-        List<Order> orders = orderService.getOrdersByUserId(userId);
-        return new ResponseEntity<>(orders, HttpStatus.OK);
+    public ResponseEntity<CollectionModel<EntityModel<Order>>> getOrdersByUserId(@PathVariable Long userId) {
+        List<EntityModel<Order>> orders = orderService.getOrdersByUserId(userId).stream()
+                .map(this::toModel)
+                .collect(Collectors.toList());
+
+        if (orders.isEmpty()) {
+            return ResponseEntity.noContent().build();
+        }
+
+        return ResponseEntity.ok(CollectionModel.of(orders,
+                linkTo(methodOn(OrderController.class).getOrdersByUserId(userId)).withSelfRel()));
     }
 
-    // Endpoint para actualizar el estado de un pedido
-    // PUT http://localhost:8083/api/orders/{orderId}/status
-    // Body (JSON): { "newStatus": "SHIPPED" }
+    @Operation(summary = "Update the status of an order")
+    @ApiResponses(value = {
+        @ApiResponse(responseCode = "200", description = "Order status updated",
+                content = @Content(mediaType = "application/hal+json", schema = @Schema(implementation = Order.class))),
+        @ApiResponse(responseCode = "404", description = "Order not found")
+    })
     @PutMapping("/{orderId}/status")
-    public ResponseEntity<Order> updateOrderStatus(
+    public ResponseEntity<EntityModel<Order>> updateOrderStatus(
             @PathVariable Long orderId,
-            @RequestParam String newStatus) { // O @RequestBody si el status viene en un JSON más complejo
+            @Parameter(description = "New status for the order", required = true) @RequestParam String newStatus) {
         try {
             Order updatedOrder = orderService.updateOrderStatus(orderId, newStatus);
-            return new ResponseEntity<>(updatedOrder, HttpStatus.OK);
-        } catch (RuntimeException e) {
-            return new ResponseEntity<>(null, HttpStatus.NOT_FOUND);
-        }
-    }
-
-    // (Opcional) Endpoint para eliminar un pedido
-    // DELETE http://localhost:8083/api/orders/{orderId}
-    @DeleteMapping("/{orderId}")
-    public ResponseEntity<Void> deleteOrder(@PathVariable Long orderId) {
-        try {
-            orderService.deleteOrder(orderId);
-            return new ResponseEntity<>(HttpStatus.NO_CONTENT);
+            return ResponseEntity.ok(toModel(updatedOrder));
         } catch (RuntimeException e) {
             return new ResponseEntity<>(HttpStatus.NOT_FOUND);
         }
     }
 
-    // Clase interna (DTO) para manejar el cuerpo de la solicitud de creación de pedido
-    // Puedes crear esto en un nuevo paquete 'dto' si lo prefieres para una mejor organización.
-    @Data // Lombok para getters y setters
+    @Operation(summary = "Delete an order")
+    @ApiResponses(value = {
+        @ApiResponse(responseCode = "204", description = "Order deleted successfully"),
+        @ApiResponse(responseCode = "404", description = "Order not found")
+    })
+    @DeleteMapping("/{orderId}")
+    public ResponseEntity<Void> deleteOrder(@PathVariable Long orderId) {
+        try {
+            orderService.deleteOrder(orderId);
+            return ResponseEntity.noContent().build();
+        } catch (RuntimeException e) {
+            return new ResponseEntity<>(HttpStatus.NOT_FOUND);
+        }
+    }
+    
+    @Data
     @NoArgsConstructor
     @AllArgsConstructor
     public static class OrderCreationRequest {

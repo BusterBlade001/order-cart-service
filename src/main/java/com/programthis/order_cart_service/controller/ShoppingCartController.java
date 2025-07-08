@@ -2,16 +2,20 @@ package com.programthis.order_cart_service.controller;
 
 import com.programthis.order_cart_service.model.ShoppingCart;
 import com.programthis.order_cart_service.service.ShoppingCartService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.hateoas.EntityModel;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-// Ya no necesitamos importar BigDecimal aquí, ya que el controlador no lo recibe directamente
-// import java.math.BigDecimal;
+import static org.springframework.hateoas.server.mvc.WebMvcLinkBuilder.linkTo;
+import static org.springframework.hateoas.server.mvc.WebMvcLinkBuilder.methodOn;
 
 @RestController
 @RequestMapping("/api/carts")
+@Tag(name = "Shopping Cart Management", description = "APIs for managing user shopping carts")
 public class ShoppingCartController {
 
     private final ShoppingCartService shoppingCartService;
@@ -21,76 +25,69 @@ public class ShoppingCartController {
         this.shoppingCartService = shoppingCartService;
     }
 
-    // Endpoint para obtener o crear un carrito por ID de usuario
-    // GET http://localhost:8083/api/carts/{userId}
-    @GetMapping("/{userId}")
-    public ResponseEntity<ShoppingCart> getOrCreateCart(@PathVariable Long userId) {
-        ShoppingCart cart = shoppingCartService.getOrCreateShoppingCart(userId);
-        return new ResponseEntity<>(cart, HttpStatus.OK);
+    private EntityModel<ShoppingCart> toModel(ShoppingCart cart) {
+        return EntityModel.of(cart,
+                linkTo(methodOn(ShoppingCartController.class).getOrCreateCart(cart.getUserId())).withSelfRel(),
+                linkTo(methodOn(ShoppingCartController.class).addProductToCart(cart.getUserId(), null, null)).withRel("add-item"),
+                linkTo(methodOn(ShoppingCartController.class).clearCart(cart.getUserId())).withRel("clear-cart"));
     }
 
-    // Endpoint para añadir un producto al carrito
-    // POST http://localhost:8083/api/carts/{userId}/items
-    // Los parámetros se envían como Query Parameters en la URL (ej. ?productId=101&quantity=2)
+    @Operation(summary = "Get or create a shopping cart for a user")
+    @GetMapping("/{userId}")
+    public ResponseEntity<EntityModel<ShoppingCart>> getOrCreateCart(@PathVariable Long userId) {
+        ShoppingCart cart = shoppingCartService.getOrCreateShoppingCart(userId);
+        return new ResponseEntity<>(toModel(cart), HttpStatus.OK);
+    }
+
+    @Operation(summary = "Add a product to the cart")
     @PostMapping("/{userId}/items")
-    public ResponseEntity<ShoppingCart> addProductToCart(
+    public ResponseEntity<EntityModel<ShoppingCart>> addProductToCart(
             @PathVariable Long userId,
             @RequestParam Long productId,
             @RequestParam Integer quantity) {
         try {
-            // El precio se obtiene internamente en el ShoppingCartService
             ShoppingCart updatedCart = shoppingCartService.addProductToCart(userId, productId, quantity);
-            return new ResponseEntity<>(updatedCart, HttpStatus.OK);
+            return new ResponseEntity<>(toModel(updatedCart), HttpStatus.OK);
         } catch (RuntimeException e) {
-            // Imprime el error para depuración
-            System.err.println("Error al añadir producto al carrito: " + e.getMessage());
-            // Devuelve un error 400 Bad Request si el producto no se encontró, etc.
-            return new ResponseEntity<>(null, HttpStatus.BAD_REQUEST);
+            return ResponseEntity.badRequest().build();
         }
     }
 
-    // Endpoint para actualizar la cantidad de un producto en el carrito
-    // PUT http://localhost:8083/api/carts/{userId}/items/{productId}
-    // El nuevoQuantity se envía como Query Parameter (ej. ?newQuantity=3)
+    @Operation(summary = "Update product quantity in the cart")
     @PutMapping("/{userId}/items/{productId}")
-    public ResponseEntity<ShoppingCart> updateProductQuantityInCart(
+    public ResponseEntity<EntityModel<ShoppingCart>> updateProductQuantityInCart(
             @PathVariable Long userId,
             @PathVariable Long productId,
             @RequestParam Integer newQuantity) {
         try {
             ShoppingCart updatedCart = shoppingCartService.updateProductQuantityInCart(userId, productId, newQuantity);
-            return new ResponseEntity<>(updatedCart, HttpStatus.OK);
+            return new ResponseEntity<>(toModel(updatedCart), HttpStatus.OK);
         } catch (RuntimeException e) {
-            System.err.println("Error al actualizar cantidad del producto en el carrito: " + e.getMessage());
-            return new ResponseEntity<>(null, HttpStatus.NOT_FOUND); // 404 si el carrito o producto no existe
+            return ResponseEntity.notFound().build();
         }
     }
 
-    // Endpoint para eliminar un producto del carrito
-    // DELETE http://localhost:8083/api/carts/{userId}/items/{productId}
+    @Operation(summary = "Remove a product from the cart")
     @DeleteMapping("/{userId}/items/{productId}")
-    public ResponseEntity<ShoppingCart> removeProductFromCart(
+    public ResponseEntity<EntityModel<ShoppingCart>> removeProductFromCart(
             @PathVariable Long userId,
             @PathVariable Long productId) {
         try {
             ShoppingCart updatedCart = shoppingCartService.removeProductFromCart(userId, productId);
-            return new ResponseEntity<>(updatedCart, HttpStatus.OK);
+            return new ResponseEntity<>(toModel(updatedCart), HttpStatus.OK);
         } catch (RuntimeException e) {
-            System.err.println("Error al eliminar producto del carrito: " + e.getMessage());
-            return new ResponseEntity<>(null, HttpStatus.NOT_FOUND); // 404 si el carrito o producto no existe
+            return ResponseEntity.notFound().build();
         }
     }
 
-    // Endpoint para vaciar el carrito
-    // DELETE http://localhost:8083/api/carts/{userId}/clear
+    @Operation(summary = "Clear all items from the cart")
     @DeleteMapping("/{userId}/clear")
-    public ResponseEntity<ShoppingCart> clearCart(@PathVariable Long userId) {
+    public ResponseEntity<EntityModel<ShoppingCart>> clearCart(@PathVariable Long userId) {
         try {
             ShoppingCart clearedCart = shoppingCartService.clearCart(userId);
-            return new ResponseEntity<>(clearedCart, HttpStatus.OK);
+            return new ResponseEntity<>(toModel(clearedCart), HttpStatus.OK);
         } catch (RuntimeException e) {
-            System.err.println("Error al vaciar el carrito: " + e.getMessage());
-            return new ResponseEntity<>(null, HttpStatus.NOT_FOUND); // 404 si el carrito no existe
+            return ResponseEntity.notFound().build();
         }
     }
 }

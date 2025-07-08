@@ -1,15 +1,18 @@
 package com.programthis.order_cart_service.model;
 
+import com.fasterxml.jackson.annotation.JsonManagedReference;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Data;
+import lombok.EqualsAndHashCode;
 import lombok.NoArgsConstructor;
+import org.springframework.hateoas.RepresentationModel;
 
 import java.time.LocalDateTime;
-import java.util.List;
 import java.util.ArrayList;
-import com.fasterxml.jackson.annotation.JsonManagedReference; // ¡Añadir esta línea!
+import java.util.List;
 
+@EqualsAndHashCode(callSuper = true)
 @Entity
 @Table(name = "shopping_carts", uniqueConstraints = {
     @UniqueConstraint(columnNames = "user_id")
@@ -17,15 +20,16 @@ import com.fasterxml.jackson.annotation.JsonManagedReference; // ¡Añadir esta 
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-public class ShoppingCart {
+public class ShoppingCart extends RepresentationModel<ShoppingCart> { // Extiende de RepresentationModel
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    // ... (resto de los campos sin cambios)
     @Column(name = "user_id", nullable = false)
     private Long userId;
 
-    @JsonManagedReference // ¡Añadir esta anotación aquí!
+    @JsonManagedReference
     @OneToMany(mappedBy = "cart", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     private List<CartItem> items = new ArrayList<>();
 
@@ -34,7 +38,8 @@ public class ShoppingCart {
 
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
-
+    
+    // ... (resto de los métodos sin cambios)
     @PrePersist
     protected void onCreate() {
         this.createdAt = LocalDateTime.now();

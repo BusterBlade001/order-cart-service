@@ -1,6 +1,5 @@
 package com.programthis.order_cart_service.service;
 
-import com.programthis.order_cart_service.model.CartItem;
 import com.programthis.order_cart_service.model.Order;
 import com.programthis.order_cart_service.model.OrderItem;
 import com.programthis.order_cart_service.model.ShoppingCart;
@@ -22,7 +21,6 @@ import java.util.stream.Collectors;
 public class OrderService {
 
     private final OrderRepository orderRepository;
-    private final OrderItemRepository orderItemRepository;
     private final ShoppingCartService shoppingCartService;
     private final ProductCatalogServiceClient productCatalogServiceClient; // ¡Añadido!
 
@@ -31,7 +29,6 @@ public class OrderService {
                         ShoppingCartService shoppingCartService,
                         ProductCatalogServiceClient productCatalogServiceClient) { // ¡Añadido!
         this.orderRepository = orderRepository;
-        this.orderItemRepository = orderItemRepository;
         this.shoppingCartService = shoppingCartService;
         this.productCatalogServiceClient = productCatalogServiceClient; // ¡Añadido!
     }
