@@ -7,11 +7,13 @@ import com.programthis.order_cart_service.repository.OrderRepository;
 import com.programthis.order_cart_service.repository.OrderItemRepository;
 import com.programthis.order_cart_service.client.ProductCatalogServiceClient;
 import com.programthis.order_cart_service.client.PaymentServiceClient;
-import com.programthis.order_cart_service.client.NotificationServiceClient; // ¡NUEVA ADICIÓN!
+import com.programthis.order_cart_service.client.NotificationServiceClient;
+import com.programthis.order_cart_service.client.UserServiceClient; // ¡NUEVA ADICIÓN!
 import com.programthis.order_cart_service.dto.ProductDto;
 import com.programthis.order_cart_service.dto.PaymentRequestDto;
 import com.programthis.order_cart_service.dto.PaymentResponseDto;
-import com.programthis.order_cart_service.dto.NotificationRequestDto; // ¡NUEVA ADICIÓN!
+import com.programthis.order_cart_service.dto.NotificationRequestDto;
+import com.programthis.order_cart_service.dto.UserDto; // ¡NUEVA ADICIÓN!
 
 import jakarta.transaction.Transactional;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -30,19 +32,22 @@ public class OrderService {
     private final ShoppingCartService shoppingCartService;
     private final ProductCatalogServiceClient productCatalogServiceClient;
     private final PaymentServiceClient paymentServiceClient;
-    private final NotificationServiceClient notificationServiceClient; // ¡NUEVA ADICIÓN!
+    private final NotificationServiceClient notificationServiceClient;
+    private final UserServiceClient userServiceClient; // ¡NUEVA ADICIÓN!
 
     @Autowired
     public OrderService(OrderRepository orderRepository, OrderItemRepository orderItemRepository,
                         ShoppingCartService shoppingCartService,
                         ProductCatalogServiceClient productCatalogServiceClient,
                         PaymentServiceClient paymentServiceClient,
-                        NotificationServiceClient notificationServiceClient) { // ¡MODIFICACIÓN CLAVE: Inyección de NotificationServiceClient!
+                        NotificationServiceClient notificationServiceClient,
+                        UserServiceClient userServiceClient) { // ¡MODIFICACIÓN CLAVE: Inyección de UserServiceClient!
         this.orderRepository = orderRepository;
         this.shoppingCartService = shoppingCartService;
         this.productCatalogServiceClient = productCatalogServiceClient;
         this.paymentServiceClient = paymentServiceClient;
-        this.notificationServiceClient = notificationServiceClient; // ¡NUEVA ADICIÓN!
+        this.notificationServiceClient = notificationServiceClient;
+        this.userServiceClient = userServiceClient; // ¡NUEVA ADICIÓN!
     }
 
     // Crear un pedido a partir del carrito de un usuario
@@ -53,11 +58,21 @@ public class OrderService {
             throw new RuntimeException("El carrito está vacío. No se puede crear un pedido.");
         }
 
+        // ¡MODIFICACIÓN CLAVE: Obtener datos del usuario desde User Service!
+        Optional<UserDto> userDtoOptional = userServiceClient.getUserById(userId);
+        if (userDtoOptional.isEmpty()) {
+            throw new RuntimeException("Usuario con ID " + userId + " no encontrado. No se puede crear el pedido.");
+        }
+        UserDto user = userDtoOptional.get();
+        // Aquí podrías usar user.getFullName() o user.getShippingAddress() si el UserDto los tuviera
+        // y tuvieras un campo para la dirección en Order, por ejemplo.
+
+
         Order newOrder = new Order();
         newOrder.setUserId(userId);
         newOrder.setOrderDate(LocalDateTime.now());
-        newOrder.setStatus("PENDING"); // O un estado inicial adecuado
-        newOrder.setShippingAddress(shippingAddress);
+        newOrder.setStatus("PENDING");
+        newOrder.setShippingAddress(shippingAddress); // Usa la dirección del request, o podrías usar user.getShippingAddress()
         newOrder.setPaymentMethod(paymentMethod);
 
         BigDecimal totalAmount = BigDecimal.ZERO;
@@ -66,7 +81,6 @@ public class OrderService {
                     OrderItem orderItem = new OrderItem();
                     orderItem.setProductId(cartItem.getProductId());
 
-                    // *** Obtener el nombre del producto del Product Catalog Service ***
                     Optional<ProductDto> productDtoOptional = productCatalogServiceClient.getProductById(cartItem.getProductId());
                     if (productDtoOptional.isEmpty()) {
                         throw new RuntimeException("Producto con ID " + cartItem.getProductId() + " en el carrito no encontrado en el catálogo. No se puede crear el pedido.");
@@ -108,30 +122,28 @@ public class OrderService {
             orderRepository.save(savedOrder);
             System.out.println("Pago para orden " + savedOrder.getId() + " procesado con estado: " + paymentResponse.getPaymentStatus());
 
-            // ¡NUEVA ADICIÓN CLAVE: Enviar notificación de confirmación de orden!
             if ("COMPLETED".equals(paymentResponse.getPaymentStatus())) {
-                // Aquí necesitarías el email real del usuario. Por ahora, un placeholder.
-                // EL SIGUIENTE PASO ES CONECTARSE CON USER-SERVICE PARA OBTENER EL EMAIL
-                String userEmail = "usuario" + userId + "@example.com"; // Placeholder
+                // ¡MODIFICACIÓN CLAVE: Usar el email real del usuario!
+                String userEmail = user.getEmail(); // ¡Obtenido del User Service!
                 String subject = "Confirmación de Orden #" + savedOrder.getId();
-                String messageBody = String.format("Estimado cliente,\n\nGracias por su compra. Su orden #%d ha sido confirmada y su pago ha sido procesado con éxito. Total: %.2f\n\nSaludos,\nEl equipo de EcoMarket", savedOrder.getId(), savedOrder.getTotalAmount());
+                String messageBody = String.format("Estimado/a %s,\n\nGracias por su compra. Su orden #%d ha sido confirmada y su pago ha sido procesado con éxito. Total: %.2f\n\nSaludos,\nEl equipo de EcoMarket", user.getFullName() != null ? user.getFullName() : user.getUsername(), savedOrder.getId(), savedOrder.getTotalAmount());
                 
                 NotificationRequestDto notificationRequest = new NotificationRequestDto(
                     userEmail,
                     subject,
                     messageBody,
-                    "ORDER_CONFIRMATION" // Tipo de notificación
+                    "ORDER_CONFIRMATION"
                 );
                 
                 try {
                     boolean notificationSent = notificationServiceClient.sendEmailNotification(notificationRequest);
                     if (notificationSent) {
-                        System.out.println("Notificación de confirmación de orden enviada para el usuario " + userId);
+                        System.out.println("Notificación de confirmación de orden enviada al correo real del usuario " + userEmail);
                     } else {
-                        System.err.println("Fallo al enviar notificación de confirmación para el usuario " + userId);
+                        System.err.println("Fallo al enviar notificación de confirmación para el usuario " + user.getEmail());
                     }
                 } catch (Exception e) {
-                    System.err.println("Excepción al intentar enviar notificación de confirmación para el usuario " + userId + ": " + e.getMessage());
+                    System.err.println("Excepción al intentar enviar notificación de confirmación para el usuario " + user.getEmail() + ": " + e.getMessage());
                 }
             }
 
@@ -145,17 +157,15 @@ public class OrderService {
         return savedOrder;
     }
 
-    // Obtener un pedido por su ID
+    // ... (resto de los métodos sin cambios)
     public Optional<Order> getOrderById(Long orderId) {
         return orderRepository.findById(orderId);
     }
 
-    // Obtener todos los pedidos de un usuario
     public List<Order> getOrdersByUserId(Long userId) {
         return orderRepository.findByUserIdOrderByOrderDateDesc(userId);
     }
 
-    // Actualizar el estado de un pedido (ej: de PENDING a PAID, SHIPPED, etc.)
     @Transactional
     public Order updateOrderStatus(Long orderId, String newStatus) {
         Order order = orderRepository.findById(orderId)
@@ -164,7 +174,6 @@ public class OrderService {
         return orderRepository.save(order);
     }
 
-    // (Opcional) Eliminar un pedido - tener cuidado con esto en producción
     @Transactional
     public void deleteOrder(Long orderId) {
         orderRepository.deleteById(orderId);
